@@ -8,11 +8,14 @@ Try this. It will probably clean up some space, cool the thing down, and hand yo
 
 Here is the quiet truth about Macs: they hoard junk, and nobody tells you.
 
-- Every Wi-Fi network you have ever joined is saved, and your Mac keeps scanning for all of them. Forever. Even when you are plugged into ethernet. Join enough coffee shops and airport lounges and your laptop is running a little background search party around the clock.
-- "Purgeable space" has been squatting on your drive for who knows how long. It looks free. It is not. You can absolutely get rid of it.
-- Old installers in Downloads, caches the size of a small video game, a Desktop with a hundred icons quietly taxing your graphics, and the occasional runaway process that has been pinning a CPU core since last Tuesday. All of it, just sitting there, slowing you down.
+- Every Wi-Fi network you have ever joined is saved, and your Mac keeps scanning for all of them. Forever. Even when you are plugged into ethernet. The first time we ran this on a real machine it found 72 saved networks the laptop was quietly hunting for around the clock.
+- Package-manager and app caches that just keep growing. That same first run cleaned up 16 GB of cache that had been sitting there doing nothing.
+- A runaway process pinning a CPU core. We once found a script that had been stuck at 99 percent for FIVE DAYS, orphaned, slowly cooking the machine while the fans screamed and nobody knew why.
+- Your memory quietly spilling onto the disk (swap) because nothing ever got freed, which makes everything feel sluggish even with apps closed.
+- "Purgeable space" squatting on your drive for who knows how long. It looks free. It is not. You can absolutely get rid of it.
+- Old installers in Downloads, and a Desktop with a hundred icons quietly taxing your graphics card every time you look at it.
 
-This finds all of it and helps you clean it up. No app to buy. No subscription. No dependencies. It uses only the tools already built into macOS, and you can read the whole thing in two minutes.
+All of it, just sitting there, slowing you down. This finds it and helps you clean it up. No app to buy. No subscription. No dependencies. It uses only the tools already built into macOS, and you can read the whole thing in two minutes.
 
 Works on every Mac, Intel and Apple Silicon. It even knows the difference: Intel Macs run hot, so it leans on cooling; Apple Silicon runs cool, so it leans on memory and clutter.
 
