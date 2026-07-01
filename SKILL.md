@@ -1,6 +1,6 @@
 ---
 name: speed
-description: Speed up and cool down any Mac (Intel or Apple Silicon), with zero dependencies. Five modes. Use "deep" for the first big cleanup (clears the backlog, frees memory, surfaces what to delete or tune) and "maintenance" for fast recurring upkeep after that. Use "call" before any Zoom, Meet, Teams, live TV, podcast, interview, or screen share to free thermal and CPU headroom so the machine does not stutter or fan-spike mid-call. Use "restore" after a call. Use "diagnose" to check state. Triggers: "/speed", "speed up my mac", "clean up my computer", "make it run light", "maintenance", "before a call", "my mac is hot/slow/choppy/laggy".
+description: Speed up and cool down any Mac (Intel or Apple Silicon), with zero dependencies. Six modes. Use "deep" for the first big cleanup (clears the backlog, frees memory, surfaces what to delete or tune) and "maintenance" for fast recurring upkeep after that. Use "call" before any Zoom, Meet, Teams, live TV, podcast, interview, or screen share to free thermal and CPU headroom so the machine does not stutter or fan-spike mid-call. Use "restore" after a call. Use "diagnose" to check state. Use "schedule" to set up automatic weekly maintenance. Triggers: "/speed", "speed up my mac", "clean up my computer", "make it run light", "maintenance", "before a call", "schedule maintenance", "my mac is hot/slow/choppy/laggy".
 ---
 
 # Speed
@@ -17,11 +17,14 @@ Run with: `bash ~/.claude/skills/speed/speed.sh <mode>`
 
 | Mode | When | What it does |
 |---|---|---|
-| `diagnose` | "is my mac ok", "why is it hot", "why is it slow" | Read only. Model, chip, macOS, thermal/throttle state, Low Power Mode, memory, swap, top CPU and top memory, long-running runaway processes, LaunchAgents, saved Wi-Fi count, Desktop/Trash clutter, reclaimable caches. Changes nothing. |
+| `diagnose` | "is my mac ok", "why is it hot", "why is it slow" | Read only. Model, chip, macOS, thermal/throttle state, Low Power Mode, memory, swap, top CPU and top memory, live runaway processes, named auto-start helpers across user and system domains (third-party boot items called out by name), saved Wi-Fi count, Desktop/Trash clutter, reclaimable caches. Changes nothing. |
 | `call` | **Before any live call, TV hit, podcast, interview, screen share** | Reversible. Freezes Photos and media-analysis daemons, runs caffeinate so the Mac never sleeps mid-call, pauses Spotlight and Time Machine, frees inactive memory, lists top CPU hogs to quit, prints an architecture-specific checklist. |
 | `restore` | **After the call** | Idempotent. Resumes the frozen daemons, stops caffeinate, re-enables Spotlight and Time Machine. |
 | `deep` | **First run**, or occasional full clean | The big one. Cleans all package-manager and system caches, excludes dev junk from Spotlight, frees memory, flushes DNS, then REPORTS runaway processes, Trash, big logs and backups, big files, saved Wi-Fi, Desktop clutter, optional UI tuning, and snapshots for a decision. It does not change settings or delete anything on its own. |
 | `maintenance` | **Recurring** (weekly) | Fast repeatable upkeep. Cleans the caches that regrow, frees memory, flushes DNS, and checks for runaway processes. Skips the heavy review. Run this regularly after the first `deep`. |
+| `schedule` | "run this automatically", "set it and forget it" | Report only. Prints a ready launchd job that runs `maintenance` weekly (Monday 10:00) plus the exact commands to install and remove it. Changes nothing by itself. |
+
+Every run appends a one-line record (date, mode, free space) to `~/.local/state/speed/run.log` so trends are visible over time.
 
 ## How to run each mode
 

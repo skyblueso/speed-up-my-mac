@@ -23,11 +23,12 @@ Works on every Mac, Intel and Apple Silicon. It even knows the difference: Intel
 
 | Mode | When | What it does |
 |---|---|---|
-| `diagnose` | "why is my Mac hot or slow?" | Read only. Tells you exactly what is going on: heat, throttling, memory, runaway processes, saved Wi-Fi, clutter, reclaimable space. Touches nothing. |
-| `deep` | The first big clean | Clears the junk that piled up, frees memory, flushes caches, then hands you a checklist of the bigger stuff to review. |
+| `diagnose` | "why is my Mac hot or slow?" | Read only. Tells you exactly what is going on: heat, throttling, memory, live runaway processes, the auto-start helpers loading at boot (named, not just counted), saved Wi-Fi, clutter, reclaimable space. Touches nothing. |
+| `deep` | The first big clean | Clears the junk that piled up, frees memory, flushes caches, then hands you a checklist of the bigger stuff to review (now including Application Support, Containers, and large node_modules folders). |
 | `maintenance` | Weekly, going forward | The quick recurring pass. Cleans what regrows and flags anything pegging your CPU. In and out. |
 | `call` | Right before a Zoom / Meet / Teams / live anything | Frees up heat and CPU so the fans do not spike and the video does not stutter mid-call. Fully reversible. |
 | `restore` | After the call | Puts everything back the way it was. |
+| `schedule` | "just run it for me" | Report only. Prints a ready launch agent that runs `maintenance` automatically every week, plus the exact commands to install and remove it. Changes nothing on its own. |
 
 ## The best part: it never nukes anything behind your back
 
@@ -52,7 +53,10 @@ bash speed.sh deep         # the big first clean
 bash speed.sh maintenance  # the quick weekly tidy
 bash speed.sh call         # before a live call
 bash speed.sh restore      # after the call
+bash speed.sh schedule     # print a weekly auto-maintenance job to install
 ```
+
+Every run appends one line (date, mode, free space) to `~/.local/state/speed/run.log`, so you can watch the trend over time.
 
 A couple of steps need admin rights (pausing Spotlight, freeing memory). In a terminal it just asks for your password the normal way. In Claude Code it hands you the exact line to run. It never sees or stores your password.
 

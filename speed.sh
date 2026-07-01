@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# speed.sh — one-stop speed and thermal tool for any Mac (Intel or Apple Silicon).
+# speed.sh: one-stop speed and thermal tool for any Mac (Intel or Apple Silicon).
 #
 # Modes:
 #   diagnose     read-only health: thermal, CPU, memory/swap, background load, clutter, space
@@ -7,6 +7,10 @@
 #   restore      undo everything 'call' changed
 #   deep         FIRST RUN / occasional: full cleanup + one-time OS tuning + review report
 #   maintenance  RECURRING: fast, repeatable cleanup (caches, memory, runaway-process check)
+#   schedule     report-only: print a launchd job to run 'maintenance' weekly, plus how to install it
+#
+# Every run appends a one-line record to ~/.local/state/speed/run.log so you can
+# see free-space and usage trends over time.
 #
 # Use 'deep' once to clear the backlog and tune the OS. Use 'maintenance' weekly
 # to keep it light. 'deep' includes everything 'maintenance' does, plus the
@@ -25,6 +29,10 @@ set -uo pipefail
 
 MODE="${1:-diagnose}"
 HR="------------------------------------------------------------"
+
+# PID file so 'restore' only stops a caffeinate THIS script started, never the
+# user's own intentional caffeinate.
+CAFFEINATE_PIDFILE="${TMPDIR:-/tmp}/speed_sh_caffeinate.pid"
 
 # ----------------------------------------------------------------------
 # Machine detection (drives architecture-specific advice)
@@ -83,10 +91,16 @@ wifi_iface() {
 }
 
 saved_wifi_count() {
-  local ifc; ifc="$(wifi_iface)"
+  local ifc count; ifc="$(wifi_iface)"
   [ -z "$ifc" ] && { echo "0"; return; }
-  networksetup -listpreferredwirelessnetworks "$ifc" 2>/dev/null \
-    | grep -vc "Preferred networks" 2>/dev/null || echo "0"
+  # grep -vc prints 0 AND exits nonzero when nothing matches, so a trailing
+  # `|| echo 0` used to append a SECOND 0 ("0\n0") and break later arithmetic.
+  # Capturing into a variable takes just the clean count (exit status ignored).
+  count="$(networksetup -listpreferredwirelessnetworks "$ifc" 2>/dev/null \
+    | grep -vc "Preferred networks")"
+  # Keep only the first line and strip non-digits, then default to 0.
+  count="$(printf '%s\n' "$count" | head -n1 | tr -cd '0-9')"
+  echo "${count:-0}"
 }
 
 dir_size() { [ -e "$1" ] && du -sh "$1" 2>/dev/null | cut -f1 || echo "0B"; }
@@ -119,7 +133,9 @@ clean_pkg_caches() {
   command -v pip3 >/dev/null 2>&1 && { pip3 cache purge      >/dev/null 2>&1 && echo "  cleaned: pip cache"; }
   command -v brew >/dev/null 2>&1 && { brew cleanup -s       >/dev/null 2>&1 && echo "  cleaned: Homebrew"; }
   command -v go   >/dev/null 2>&1 && { go clean -cache       >/dev/null 2>&1 && echo "  cleaned: Go build cache"; }
-  [ -d "$HOME/Library/Developer/Xcode/DerivedData" ] && { rm -rf "$HOME/Library/Developer/Xcode/DerivedData"/* 2>/dev/null && echo "  cleaned: Xcode DerivedData"; }
+  # Report-only: never auto-delete DerivedData (SKILL.md: nothing is deleted
+  # automatically). Show what could be freed and how to clear it by hand.
+  [ -d "$HOME/Library/Developer/Xcode/DerivedData" ] && echo "  review (not deleted): Xcode DerivedData is $(dir_size "$HOME/Library/Developer/Xcode/DerivedData"); clear it yourself with: rm -rf ~/Library/Developer/Xcode/DerivedData/*"
   qlmanage -r cache >/dev/null 2>&1 && echo "  flushed: QuickLook thumbnail cache"
 }
 
@@ -128,20 +144,82 @@ free_mem_flush() {
   run_sudo "flush DNS cache"       dscacheutil -flushcache
 }
 
-# A runaway is a process pegging a full core or more right now (>90% CPU), OR
-# one that has been running for days and is still using real CPU. Both signatures.
+# A runaway is a process burning real CPU right now (roughly half a core or
+# more). We take a LIVE sample with `top -l 2` and read ONLY the second sample:
+# the first top sample reports a useless cumulative figure on macOS. A long
+# uptime is NOT a runaway, so elapsed time is deliberately ignored here.
 find_runaways() {
-  ps -axo pcpu,pid,etime,comm -r \
-    | awk 'NR>1 && ($1+0 > 90 || ($3 ~ /-/ && $1+0 > 5))' \
-    | grep -viE "grep|awk"
+  top -l 2 -n 20 -stats pid,cpu,command -o cpu 2>/dev/null \
+    | awk -v thresh=50 '
+        /^Processes:/ { sample++; rows=0; next }
+        sample >= 2 && /^PID/ { rows=1; next }
+        sample >= 2 && rows && $1 ~ /^[0-9]+$/ && $2+0 > thresh { print }
+      ' \
+    | grep -viwE "top|grep|awk"
 }
 
 report_runaway() {
   echo "  A process pegging the CPU (a full core or more), or running for days, is the usual culprit."
   echo "  NEVER kill anything you do not recognize, an app you're using, or helpers you started"
   echo "  (claude, mcp, node/python servers, or an active render)."
-  local hits; hits="$(find_runaways | grep -viE "claude|mcp" | head -6)"
+  # Never offer to kill our own helpers (claude/mcp) or GUI/system-critical
+  # processes. The second grep uses -w (whole word) so "Dock" does not also
+  # shield "Docker", which is a legitimate kill candidate.
+  local hits; hits="$(find_runaways \
+    | grep -viE "claude|mcp" \
+    | grep -viwE "WindowServer|loginwindow|Terminal|iTerm2|Finder|Dock|SystemUIServer|coreaudiod" \
+    | head -6)"
   [ -n "$hits" ] && echo "$hits" | sed 's/^/  /' || echo "  nothing pegging the CPU right now (good)"
+}
+
+# Auto-start helpers are the usual hidden cause of a slow login and steady
+# background CPU. Apple's own agents are fine; the ones that pile up are
+# third-party LaunchAgents and LaunchDaemons (updaters, sync clients, helpers).
+# We list them BY NAME across the user and system domains, not just a bare count.
+report_startup_load() {
+  local detail="${1:-brief}"
+  local ua sa sd
+  ua="$(ls -1 "$HOME/Library/LaunchAgents"/*.plist 2>/dev/null | wc -l | tr -d ' ')"
+  sa="$(ls -1 /Library/LaunchAgents/*.plist 2>/dev/null | wc -l | tr -d ' ')"
+  sd="$(ls -1 /Library/LaunchDaemons/*.plist 2>/dev/null | wc -l | tr -d ' ')"
+  echo "  auto-start helpers: $ua user agents, $sa system agents, $sd system daemons"
+  # The third-party system agents and daemons are the real slowdown suspects
+  # (they load at boot for every user). Apple's own com.apple.* are expected.
+  local third n
+  third="$( { ls -1 /Library/LaunchAgents/*.plist /Library/LaunchDaemons/*.plist 2>/dev/null; } \
+    | sed 's#.*/##; s#\.plist$##' | grep -viE '^com\.apple\.' | sort -u )"
+  if [ -n "$third" ]; then
+    n="$(printf '%s\n' "$third" | wc -l | tr -d ' ')"
+    echo "  third-party system helpers ($n) loading at boot:"
+    if [ "$detail" = full ]; then
+      printf '%s\n' "$third" | sed 's/^/    /'
+    else
+      printf '%s\n' "$third" | head -8 | sed 's/^/    /'
+      [ "$n" -gt 8 ] 2>/dev/null && echo "    ... and $((n-8)) more (see them all with: /speed deep)"
+    fi
+  else
+    echo "  third-party system helpers: none (clean)"
+  fi
+  # User-account auto-start items you or an app added (shown in full detail).
+  if [ "$detail" = full ]; then
+    local uthird
+    uthird="$(ls -1 "$HOME/Library/LaunchAgents"/*.plist 2>/dev/null \
+      | sed 's#.*/##; s#\.plist$##' | grep -viE '^com\.apple\.' | sort -u)"
+    if [ -n "$uthird" ]; then
+      echo "  your user auto-start items:"
+      printf '%s\n' "$uthird" | sed 's/^/    /'
+    fi
+  fi
+}
+
+# Append a one-line record of every run so trends are visible over time
+# (free space and mode). Writes only to its own state dir, never fails the run.
+log_run() {
+  local logdir="$HOME/.local/state/speed"
+  mkdir -p "$logdir" 2>/dev/null || return 0
+  local free; free="$(df -h / 2>/dev/null | awk 'NR==2{print $4}')"
+  printf '%s\t%-11s\tfree=%s\n' "$(date '+%Y-%m-%d %H:%M')" "$MODE" "${free:-?}" \
+    >> "$logdir/run.log" 2>/dev/null || true
 }
 
 # ----------------------------------------------------------------------
@@ -171,7 +249,7 @@ diagnose() {
   echo "  runaway processes (a full core or more pegged now, or running for days with real CPU):"
   local runaway; runaway="$(find_runaways | head -5)"
   [ -n "$runaway" ] && echo "$runaway" | sed 's/^/    /' || echo "    none found (good)"
-  echo "  user LaunchAgents (auto-start background helpers): $(ls -1 ~/Library/LaunchAgents 2>/dev/null | wc -l | tr -d ' ')"
+  report_startup_load brief
   echo "  saved Wi-Fi networks: $(saved_wifi_count)  (a large number makes Wi-Fi scanning burn CPU when not connected)"
 
   echo ""
@@ -193,6 +271,26 @@ diagnose() {
 }
 
 # ----------------------------------------------------------------------
+# Stop ONLY the caffeinate this script launched (tracked by PID file). Returns 0
+# if it stopped one, nonzero otherwise. Never touches a caffeinate we did not
+# start, so the user's own intentional caffeinate is always left alone.
+stop_our_caffeinate() {
+  local pid
+  [ -f "$CAFFEINATE_PIDFILE" ] || return 1
+  pid="$(cat "$CAFFEINATE_PIDFILE" 2>/dev/null)"
+  rm -f "$CAFFEINATE_PIDFILE" 2>/dev/null
+  case "$pid" in
+    ''|*[!0-9]*) return 1 ;;   # missing or not a clean PID: nothing to do
+  esac
+  # Only kill it if that PID is still actually a caffeinate process (guards
+  # against the PID having been recycled to some unrelated process).
+  if ps -p "$pid" -o comm= 2>/dev/null | grep -q "caffeinate"; then
+    kill "$pid" 2>/dev/null && return 0
+  fi
+  return 1
+}
+
+# ----------------------------------------------------------------------
 call_mode() {
   echo "$HR"; echo "SPEED CALL MODE: freeing headroom for a live call (reversible)"; echo "$HR"
 
@@ -201,10 +299,12 @@ call_mode() {
   if killall -STOP mediaanalysisd 2>/dev/null; then echo "  frozen: mediaanalysisd"; else echo "  mediaanalysisd not running (fine)"; fi
 
   echo "Keeping the Mac awake for the call (no sleep, no display nap):"
-  pkill -x caffeinate 2>/dev/null
+  stop_our_caffeinate >/dev/null 2>&1   # clear only a stale one we started before
   nohup caffeinate -dimsu >/dev/null 2>&1 &
+  CAFF_PID=$!
   disown 2>/dev/null || true
-  echo "  caffeinate running"
+  echo "$CAFF_PID" > "$CAFFEINATE_PIDFILE" 2>/dev/null || true
+  echo "  caffeinate running (pid $CAFF_PID)"
 
   echo "Pausing Spotlight indexing and Time Machine, freeing inactive memory:"
   run_sudo "Spotlight indexing off"        mdutil -i off / >/dev/null
@@ -239,7 +339,11 @@ restore_mode() {
   echo "$HR"; echo "SPEED RESTORE: turning background services back on"; echo "$HR"
   killall -CONT photoanalysisd 2>/dev/null && echo "  resumed: photoanalysisd" || echo "  photoanalysisd already running"
   killall -CONT mediaanalysisd 2>/dev/null && echo "  resumed: mediaanalysisd" || echo "  mediaanalysisd already running"
-  pkill -x caffeinate 2>/dev/null && echo "  stopped: caffeinate (sleep allowed again)" || echo "  caffeinate not running"
+  if stop_our_caffeinate; then
+    echo "  stopped: caffeinate this script started (sleep allowed again)"
+  else
+    echo "  no caffeinate started by this script (any of your own is left running)"
+  fi
   run_sudo "Spotlight indexing on"        mdutil -i on / >/dev/null
   run_sudo "Time Machine auto-backup on"  tmutil enable
   echo "Everything 'call' changed is restored."
@@ -321,6 +425,13 @@ deep_clean() {
     echo "  old iPhone backups: $(dir_size "$HOME/Library/Application Support/MobileSync/Backup")   (manage in Finder/Apple Devices)"
   echo "  big caches (ms-playwright/puppeteer break browser automation until reinstall):"
   du -sh ~/Library/Caches/* 2>/dev/null | sort -rh | head -5 | sed 's/^/    /'
+  echo "  Application Support (apps keep data and caches here; Docker.raw and sync clients get huge):"
+  du -sh ~/Library/Application\ Support/* 2>/dev/null | sort -rh | head -5 | sed 's/^/    /'
+  echo "  Containers (sandboxed app data): $(dir_size ~/Library/Containers)"
+  echo "  large node_modules folders under home (safe to delete; restore with npm/yarn install; may take a moment):"
+  find "$HOME" -maxdepth 4 -type d -name node_modules -prune 2>/dev/null | while read -r nm; do
+    echo "$(du -sh "$nm" 2>/dev/null | cut -f1)  $nm"
+  done | sort -rh | head -6 | sed 's/^/    /'
 
   echo ""
   echo "BIG installers / files in Downloads and Desktop (delete candidates):"
@@ -336,7 +447,7 @@ deep_clean() {
     echo "    that is a lot; each one gets scanned. Prune in System Settings > Wi-Fi > Advanced, or:"
     echo "    sudo networksetup -removepreferredwirelessnetwork \"$(wifi_iface)\" \"NETWORK NAME\""
   fi
-  echo "  user LaunchAgents (auto-start helpers): $(ls -1 ~/Library/LaunchAgents 2>/dev/null | wc -l | tr -d ' ')  (review in ~/Library/LaunchAgents)"
+  report_startup_load full
   echo "  Desktop items: $(ls -1 ~/Desktop 2>/dev/null | wc -l | tr -d ' ')  (right-click Desktop > Use Stacks to cut render load, no files moved)"
 
   echo ""
@@ -356,12 +467,53 @@ deep_clean() {
   flush_pending_sudo
 }
 
+# ----------------------------------------------------------------------
+# schedule: report-only. Print a ready launchd job that runs 'maintenance'
+# weekly, plus the exact commands to install and remove it. Changes nothing.
+# ----------------------------------------------------------------------
+schedule_mode() {
+  local plist="$HOME/Library/LaunchAgents/com.speed.maintenance.plist"
+  local script; script="$(cd "$(dirname "$0")" 2>/dev/null && pwd)/$(basename "$0")"
+  echo "$HR"; echo "SPEED SCHEDULE: weekly automatic maintenance (report-only, nothing is changed)"; echo "$HR"
+  echo "To run 'maintenance' by itself every week, save this launch agent and load it."
+  echo "Copy-paste the whole block:"
+  echo ""
+  echo "  mkdir -p \"$HOME/.local/state/speed\" \"$HOME/Library/LaunchAgents\""
+  echo "  cat > \"$plist\" <<'PLIST'"
+  cat <<PLIST
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+  <key>Label</key><string>com.speed.maintenance</string>
+  <key>ProgramArguments</key>
+  <array>
+    <string>/bin/bash</string>
+    <string>$script</string>
+    <string>maintenance</string>
+  </array>
+  <key>StartCalendarInterval</key>
+  <dict><key>Weekday</key><integer>1</integer><key>Hour</key><integer>10</integer><key>Minute</key><integer>0</integer></dict>
+  <key>StandardOutPath</key><string>$HOME/.local/state/speed/maintenance.log</string>
+  <key>StandardErrorPath</key><string>$HOME/.local/state/speed/maintenance.log</string>
+</dict>
+</plist>
+PLIST
+  echo "  PLIST"
+  echo "  launchctl load \"$plist\""
+  echo ""
+  echo "It runs 'maintenance' every Monday at 10:00 and logs to ~/.local/state/speed/maintenance.log"
+  echo "To stop and remove it:  launchctl unload \"$plist\" && rm \"$plist\""
+  echo "$HR"
+}
+
 case "$MODE" in
-  diagnose)        diagnose ;;
-  call)            call_mode ;;
-  restore)         restore_mode ;;
-  maintenance|tidy) maintenance_mode ;;
-  deep)            diagnose; echo ""; deep_clean ;;
-  -h|--help|help|usage) echo "usage: speed.sh [diagnose|call|restore|deep|maintenance]" ;;
-  *) echo "usage: speed.sh [diagnose|call|restore|deep|maintenance]"; exit 1 ;;
+  diagnose)        diagnose; log_run ;;
+  call)            call_mode; log_run ;;
+  restore)         restore_mode; log_run ;;
+  maintenance|tidy) maintenance_mode; log_run ;;
+  deep)            diagnose; echo ""; deep_clean; log_run ;;
+  schedule)        schedule_mode ;;
+  -h|--help|help|usage) echo "usage: speed.sh [diagnose|call|restore|deep|maintenance|schedule]" ;;
+  *) echo "usage: speed.sh [diagnose|call|restore|deep|maintenance|schedule]"; exit 1 ;;
 esac
