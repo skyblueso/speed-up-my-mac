@@ -3,6 +3,14 @@
 All notable changes to Speed Up My Mac are documented here.
 This project follows semantic versioning.
 
+## [1.2.0] - 2026-07-02
+
+The admin-rights hand-off now does the copying for you.
+
+### Changed
+- **The pending sudo command is copied to your clipboard automatically.** When a run ends with steps that need your password (freeing memory, flushing DNS, pausing Spotlight), the script now copies the joined command itself (pbcopy, built into macOS) and prints plain paste instructions: open a fresh Terminal window, paste, press Enter, type your password. It also warns that the screen shows nothing while you type the password, which trips up people who think the prompt is frozen.
+- **Scheduled runs never touch your clipboard.** The weekly launch agent printed by `schedule` sets `SPEED_NO_CLIPBOARD=1`, so a background maintenance run can never overwrite something you had copied. Set the same variable to opt out of the clipboard copy anywhere else.
+
 ## [1.1.0] - 2026-07-02
 
 Correctness fixes and four new capabilities. Fully backward compatible: every existing mode behaves the same, only safer and more useful.

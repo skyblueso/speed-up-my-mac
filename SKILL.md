@@ -30,13 +30,25 @@ Every run appends a one-line record (date, mode, free space) to `~/.local/state/
 
 ### call
 1. Run `bash ~/.claude/skills/speed/speed.sh call`.
-2. The script makes the reversible system changes itself. If it prints a "needs admin rights" line, hand that exact line to the user to run (in Claude Code, paste with a leading `!`; in a terminal, run it directly). Never type a password.
+2. The script makes the reversible system changes itself. If steps need admin rights, follow the **Admin-rights hand-off** below.
 3. Read back the top-CPU list. If something heavy is open that the user does not need on the call (a browser with many tabs, a render, Docker, a large IDE), offer to quit it. Never quit the call app itself or work they need.
 4. Surface the checklist it printed. On Intel the physical wins (elevate the laptop, airflow, Low Power Mode) matter most; on Apple Silicon the wins are network and quitting heavy apps.
 5. Remind the user to run `/speed restore` when the call ends.
 
 ### restore
-Run `bash ~/.claude/skills/speed/speed.sh restore`. Hand off any "needs admin rights" line the same way. Confirm everything is back on.
+Run `bash ~/.claude/skills/speed/speed.sh restore`. Hand off any admin steps with the **Admin-rights hand-off** below. Confirm everything is back on.
+
+## Admin-rights hand-off (every mode that needs sudo)
+
+Neither the script nor Claude can type the user's password: sudo needs an interactive password prompt, and handling the password is forbidden anyway. So any run with pending admin steps ends with the script doing this automatically:
+
+1. It joins the pending sudo steps into ONE command line.
+2. It copies that line to the clipboard itself (pbcopy, built into macOS). No extra copy step is needed.
+3. It prints paste instructions.
+
+Your job after the run: relay it plainly. Tell the user the command is already on their clipboard, to open a fresh Terminal window, paste, and press Enter, and that when Terminal asks for their password the screen shows nothing while they type. That silence is normal; the password is going in. They press Enter and it finishes.
+
+If the clipboard copy was skipped (no pbcopy, or a scheduled run with `SPEED_NO_CLIPBOARD=1`), the script prints the line instead; copy it to the clipboard for the user yourself with pbcopy, then give the same instructions. Never ask the user to retype the command by hand.
 
 ### deep
 1. Run `bash ~/.claude/skills/speed/speed.sh deep`. The automatic part (cache cleaning, Spotlight exclusions, freeing memory, DNS flush) is safe and runs on its own. It does NOT change any setting or delete anything by itself; those are only reported.
@@ -44,7 +56,7 @@ Run `bash ~/.claude/skills/speed/speed.sh restore`. Hand off any "needs admin ri
    - **Runaway processes**: show the full command line. Never kill anything you do not recognize, an app the user is using, or background helpers (claude, mcp, node/python servers they started). A script pegging high CPU with an old start time is the usual culprit. Kill with `kill -9 <pid>` only after the user confirms.
    - **Big installers / files in Downloads and Desktop**: list them, confirm, then delete. Never delete anything not listed first. Skip anything that looks like the user's work or assets.
    - **Browser-automation caches (ms-playwright, puppeteer)**: deleting these breaks Playwright/Puppeteer until reinstall. Only clear if the user says so.
-   - **Local Time Machine snapshots**: if many exist and purgeable space is tight, offer `tmutil thinlocalsnapshots / 9999999999 4`, with any admin step handed to the user.
+   - **Local Time Machine snapshots**: if many exist and purgeable space is tight, offer `tmutil thinlocalsnapshots / 9999999999 4`, with any admin step handed off per the **Admin-rights hand-off**.
 3. Report before/after disk and load.
 
 ### maintenance
@@ -92,7 +104,7 @@ After acting, give a short, clean summary of what was removed and the space or C
 - Never delete a file you have not listed to the user first. Documents, project assets, and anything unrecognized are off limits.
 - Never touch the iCloud daemons `bird` or `cloudd`. Suspending them risks stuck sync loops. If iCloud is hammering the CPU, tell the user to pause iCloud Drive in System Settings.
 - Never run `mdutil -E` (erases the Spotlight index) or `tmutil disablelocal` (deprecated). The script does not; do not add them.
-- You cannot type the user's password. Steps needing admin rights are handed back for the user to run.
+- You cannot type the user's password. Steps needing admin rights are handed back for the user to run: the script copies the command to their clipboard, and you tell them to paste it into a fresh Terminal window and warn them the password is invisible while they type it.
 
 ## Recommendations to surface (not automated)
 These are levers beyond what a script can safely do. Mention the relevant ones based on the detected architecture.

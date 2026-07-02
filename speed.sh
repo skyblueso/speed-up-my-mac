@@ -70,13 +70,26 @@ flush_pending_sudo() {
   if [ "${#PENDING_SUDO[@]}" -gt 0 ]; then
     echo ""
     echo "$HR"
-    echo "STEPS THAT NEED ADMIN RIGHTS. Run this to finish:"
-    echo "  (in Claude Code, paste it with a leading !   in a terminal, just run it)"
-    echo ""
+    echo "ONE FINAL STEP NEEDS YOUR PASSWORD (admin rights), so it is yours to run:"
     local joined=""
     for c in "${PENDING_SUDO[@]}"; do
       if [ -z "$joined" ]; then joined="sudo $c"; else joined="$joined && sudo $c"; fi
     done
+    # Copy the command to the clipboard automatically so the user only has to
+    # paste. Skipped in scheduled/background runs (SPEED_NO_CLIPBOARD=1) so the
+    # weekly launchd job never overwrites whatever the user has on the clipboard.
+    if [ "${SPEED_NO_CLIPBOARD:-0}" != "1" ] && command -v pbcopy >/dev/null 2>&1 \
+       && printf '%s' "$joined" | pbcopy 2>/dev/null; then
+      echo "  The command is ALREADY COPIED to your clipboard. To finish:"
+      echo "    1. Open a fresh Terminal window (Cmd+Space, type Terminal, press Enter)."
+      echo "    2. Paste (Cmd+V) and press Enter."
+      echo "    3. Type your Mac password and press Enter. The screen shows NOTHING while"
+      echo "       you type the password. That is normal; it is still going in."
+      echo ""
+      echo "  For reference, the command on your clipboard:"
+    else
+      echo "  Copy this line and run it in a terminal:"
+    fi
     echo "  $joined"
     echo "$HR"
   fi
@@ -494,6 +507,8 @@ schedule_mode() {
   </array>
   <key>StartCalendarInterval</key>
   <dict><key>Weekday</key><integer>1</integer><key>Hour</key><integer>10</integer><key>Minute</key><integer>0</integer></dict>
+  <key>EnvironmentVariables</key>
+  <dict><key>SPEED_NO_CLIPBOARD</key><string>1</string></dict>
   <key>StandardOutPath</key><string>$HOME/.local/state/speed/maintenance.log</string>
   <key>StandardErrorPath</key><string>$HOME/.local/state/speed/maintenance.log</string>
 </dict>

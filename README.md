@@ -58,7 +58,7 @@ bash speed.sh schedule     # print a weekly auto-maintenance job to install
 
 Every run appends one line (date, mode, free space) to `~/.local/state/speed/run.log`, so you can watch the trend over time.
 
-A couple of steps need admin rights (pausing Spotlight, freeing memory). In a terminal it just asks for your password the normal way. In Claude Code it hands you the exact line to run. It never sees or stores your password.
+A couple of steps need admin rights (pausing Spotlight, freeing memory). In a terminal it just asks for your password the normal way. In Claude Code it copies the exact finishing line to your clipboard for you: open a fresh Terminal window, paste, press Enter, and type your password. You will not see anything while typing the password; that is normal, it is going in. The script never sees or stores your password.
 
 ## Is this safe?
 
